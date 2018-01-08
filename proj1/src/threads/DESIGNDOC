@@ -1,0 +1,174 @@
+			+--------------------+
+			|        CS 140      |
+			| PROJECT 1: THREADS |
+			|   DESIGN DOCUMENT  |
+			+--------------------+
+				   
+---- GROUP ----
+
+
+Anubhav Sarkar <anubhavs@usc.edu>
+Ruth Libowsky <libowsky@usc.edu>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+https://en.wikipedia.org/wiki/Busy_waiting
+https://web.stanford.edu/class/cs140/projects/pintos/pintos_2.html#SEC25
+
+
+			     ALARM CLOCK
+			     ===========
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+For each individual thread (in thread.h):
+
+int64_t wakeup_time;
+indicates at which tick of the timer the thread should be unblocked, default value INT_MAX for threads that haven’t been put to sleep
+
+struct list_elem tick_elem;
+used for list of sleeping threads
+
+For all threads (in thread.c):
+
+static struct list sleeping_list;
+Stores threads that have been put to sleep, default empty, threads added when they are put to sleep and removed when they are woken up
+
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe what happens in a call to timer_sleep(),
+>> including the effects of the timer interrupt handler.
+
+In a call to timer_sleep(), first the number of ticks until the current moment is tabulated.  Then, in the timer_sleep() function declaration, the argument named “ticks” is passed in. First, it is checked that the number of ticks that the thread needs to sleep is positive - if it is less than or equal to 0, the function simply returns as that is an invalid amount of time to sleep. If the number of ticks to sleep is valid, the wakeup time for this thread is calculated by taking the current time (in ticks) and adding that number to the number of ticks that the thread needs to sleep. Once it is assured that interrupts are enabled, a call is made to the function set_wakeup_time() in thread.c which takes an argument which is the time that a thread should wake up.
+
+In this function, the thread itself is modified, as the data member for wakeup time is set. This is a custom data member. Since this thread needs to sleep, it is added to the sleeping list and then blocked. Finally, interrupts are disabled.
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+
+In timer_interrupt, we make a call to the function check_wakeup(), which is located in thread.c. Check_wakeup() iterates through the list of sleeping threads, waking up threads whose data member wakeup_time is equal to the current tick. The threads that have been woken up are removed from the list of sleeping threads and their wakeup time is reset to INT_MAX.
+
+---- SYNCHRONIZATION ----
+
+>> A4: How are race conditions avoided when multiple threads call
+>> timer_sleep() simultaneously?
+
+If multiple threads call timer_sleep(), the function only modifies a local variable in each thread. Then, each thread is added to the sleeping list, and then the sleeping list is iterated through. So, even if each thread sleeps for the same amount of time, there are no race conditions. 
+
+>> A5: How are race conditions avoided when a timer interrupt occurs
+>> during a call to timer_sleep()?
+If a timer interrupt occurs during a call to timer_sleep(), there are no race conditions because a separate function called set_wakeup_time() is called and in that function, interrupts are disabled. All processing in timer_sleep() takes place in set_wakeup_time()
+
+---- RATIONALE ----
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+We chose this design because we didn’t want any race conditions occurring in the case that multiple threads were calling timer_sleep() or interrupts were occurring during timer_sleep(). The majority of our design involves disabling interrupts before any processing is done and enabling interrupts afterwards in order to prevent race conditions. The previous designs we considered did not involve disabling and enabling interrupts, and these designs were failing test cases, so we realized we had to use our current design. 
+
+			 PRIORITY SCHEDULING
+			 ===================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+For individual threads (in thread.c):
+
+int64_t old_priority;
+Stores the priority the thread was given upon creation, used to reset a thread’s actual priority once priority donation has finished
+
+struct list locks_held_by_thread;
+Stores the locks held by the thread, used to check if each lock has waiters with a higher priority, in which case the thread would require donated priority
+
+struct lock *desired_lock;
+Lock the thread is trying to obtain, NULL when the thread is not trying to obtain a lock
+
+>> B2: Explain the data structure used to track priority donation.
+>> Use ASCII art to diagram a nested donation.  (Alternately, submit a
+>> .png file.)
+
+//Thread A with priority 2 has a lock (L1). Thread B with priority 5 needs a lock (L1). Thread B has a lock (L2). Thread C with priority 7 needs a lock (L2). 
+C(7)(+L2) →  B(5)(+L1)(L2) →  A(2)(L1)
+
+//Thread C has the highest priority so it will attempt execution first. Since it does not have the lock it needs, L2, it will donate priority to Thread B. Thread B now has priority 7.
+C(7)(+L2) →  B(7)(+L1)(L2) →  A(2)(L1)
+
+//Thread B cannot execute because it does not have the lock it needs, so it donates priority to Thread A. Thread A now has priority 7.
+C(7)(+L2) →  B(7)(+L1)(L2) →  A(7)(L1)
+
+//Thread A executes and releases Lock 1.
+C(7)(+L2) →  B(7)(+L1)(L2)
+
+//Thread B can now acquire Lock 1 and execute. Thread B then releases Lock 2.
+C(7)(+L2) →  B(7)(L1)(L2)
+C(7)(+L2) 
+
+//Thread C can now acquire Lock 2 and execute. Thread C then releases Lock 2. 
+C(7)(L2)
+C(7) 
+ 
+Priority donation is tracked using a function called check_donations() which involves a list of locks that each thread holds, as well as the list of waiters for each lock. 
+
+---- ALGORITHMS ----
+
+>> B3: How do you ensure that the highest priority thread waiting for
+>> a lock, semaphore, or condition variable wakes up first?
+
+When it is time for a thread to wake up, thread_yield is called. This function pops the first value from the ready list and lets it run. Before popping from this list, it is sorted so that the thread with the highest priority is in front of the list.
+
+>> B4: Describe the sequence of events when a call to lock_acquire()
+>> causes a priority donation.  How is nested donation handled?
+
+In lock_acquire(), interrupts are disabled so we can manipulate the shared resource of priorities of threads. We set the desired lock of the current thread to the argument passed into lock_acquire(), to be used in the case where we need to donate priority. If the lock that the current thread is trying to obtain has a holder with a lower priority than the current thread, we call donate_priority().
+
+Donate_priority() uses a while loop with a variable temp_thread, initialized to the current thread. While temp_thread is trying to obtain a lock that is held by a thread with lower priority, temp_thread “donates” its priority to the lock holder with the lower priority. The lock holder with the lower priority gets a priority with the value of temp_thread’s priority. The while loop takes care of nested donation. Here is a simple example:
+
+Thread 1: Priority 10, Holding Lock A 
+
+Thread 2: Priority 50, Holding Lock B, Waiting for Lock A 
+
+Thread 3: Priority 100, Waiting for Lock B
+
+Thread 3 will call lock_acquire(), setting it’s desired_lock to Lock B. Because Lock B has a holder, donate_priority will be called. In donate_priority, temp_thread will be set to Thread 3. Because the lock holder’s priority is lower than temp_thread’s priority, Thread 2’s priority will be set to Thread 3’s Priority, 100. Now, temp_thread is Thread 2 with priority 100. Because temp_thread desired Lock A, which is held by Thread 1 with a lower priority of 10, Thread 2 will donate its priority to Thread 1. Thread 1, with new priority 100, has no desired lock, so the while loop will terminate.
+
+At the end of donate_priority, we call thread_yield so Thread 1 can execute. Once Thread 1 executes and releases Lock A, Thread 2 will be able to acquire Lock A. Once Thread 2 releases Lock B, Thread 3 will be able to acquire Lock B.
+
+>> B5: Describe the sequence of events when lock_release() is called
+>> on a lock that a higher-priority thread is waiting for.
+
+Lock_release first disables interrupts, and then calls check_donations(), where the priority of the current thread may be reset. If the highest priority thread waiting to acquire the lock that the current thread holds is greater than the priority of the current thread (true in this case), the current thread’s priority is set to that value. Then, thread_yield() is called on the current thread as there is another thread with a higher priority that should take precedence.
+
+---- SYNCHRONIZATION ----
+
+>> B6: Describe a potential race in thread_set_priority() and explain
+>> how your implementation avoids it.  Can you use a lock to avoid
+>> this race?
+
+While not in our particular implementation, it is possible that thread_set_priority() does more than just change the priority data member of a thread. That could mean that after setting the priority data member, it could modify some data structure such as a list that sorts all of the threads by their priorities. In this case, another thread could wake after setting the priority data member and before changing the list, meaning the list would not get properly updated as the current thread would yield.
+
+Yes, a lock could be used to avoid this race, with acquisition of the lock before any data members or lists are changed, and release of the lock after the list has been changed. 
+
+Our implementation avoids this race condition because we never modify any other data members in thread_set_priority(). 
+
+
+---- RATIONALE ----
+
+>> B7: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+We chose this design of only modifying one data member in thread_set_priority() and doing all other data manipulation in other functions in order to avoid race conditions. Our design is more robust as data structure manipulation only happens in functions where we disable interrupts to prevent race conditions. 
+
+

@@ -1,0 +1,146 @@
+       	       	    +---------------------------+
+		    |		CS 140		|
+		    | PROJECT 3: VIRTUAL MEMORY	|
+		    |	   DESIGN DOCUMENT	|
+		    +---------------------------+
+
+---- GROUP ----
+
+Anubhav Sarkar anubhavs@usc.edu
+Ruth Libowsky libowsky@usc.edu
+
+---- PRELIMINARIES ----
+
+N/A
+
+			PAGE TABLE MANAGEMENT
+			=====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+If there is a page fault, then first we look up a page table entry. Now, using the page table entry we find the frame. If a new frame is available then we get it. Otherwise, it can be evicted. Next, we map a virtual address to a physical address. If the virtual address is not swapped, we read in the data from the file. Otherwise, we use the swap partition.
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+
+Data is only accessed using user virtual addresses instead of kernel virtual addresses.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+Each frame has its own lock. Only one process can use a page index at a time since it must acquire a lock before accessing a page index.
+
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+We did not implement any new data structures.
+
+		       PAGING TO AND FROM DISK
+		       =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+We  keep track of all of the frames and see which frame is next to be replaced. When the user requires a frame, it looks for an unset accessed bit, which is cleared after use. If used, the frame is moved to the end of the list in order to be used in the future.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+
+When process Q finishes, we free the frame. Process P will simply allocate a new frame. From the frame, we can access the thread. From the thread, we can deallocate the frame and remove the reference to the frame. Then, when we allocate process P, the entry in the page table’s thread is assigned to the current thread that is allocating process P.
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+The pusha command can access a maximum of 32 bytes lower than the stack pointer. If anything is outside of this range, it is an invalid address.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+Every table access has a lock to ensure synchronization. This way, there will be no dependencies and by ensuring that the locks don’t interact with each other we can prevent all 4 deadlock conditions from occurring simultaneously.
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+Every table entry requires a lock. When Q tries to access or modify the page that P is modifying, it will not be able to and it will have to wait until eviction has completed.
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+
+We can use a boolean that says whether or not an entry can be evicted. If the boolean is false, then the process cannot be evicted.
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+We use page faults to bring the pages in. If the address is invalid, then it will not be accepted.
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+We want to limit parallelism by using a single lock for the whole VM. This allows for a much simpler design but most importantly prevents deadlock. In all cases, we would rather have slower performance than any possibility of deadlock.
+
+			 MEMORY MAPPED FILES
+			 ===================
+
+---- DATA STRUCTURES ----
+
+---- ALGORITHMS ----
+
+>> C2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+>> C3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+---- RATIONALE ----
+
+>> C4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+We choose to share code as mmap and executable mappings behave similarly during loading.
+
